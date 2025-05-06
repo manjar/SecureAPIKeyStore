@@ -8,66 +8,126 @@
 import SwiftUI
 
 public struct APIKeyManagerView: View {
-    @StateObject private var keyManager: APIKeyManager
-    @State private var newKey = ""
-    @State private var selectedService: String
+    @ObservedObject var manager: APIKeyManager
+    @State private var showEditor = false
+    @State private var editingService: Service? = nil
 
-    private let services: [String]
-
-    public init(services: [String]) {
-        self.services = services
-        self._selectedService = State(initialValue: services.first ?? "")
-        self._keyManager = StateObject(wrappedValue: APIKeyManager(serviceIdentifiers: services))
+    public init(manager: APIKeyManager) {
+        self.manager = manager
     }
 
     public var body: some View {
         NavigationView {
-            Form {
-                Picker("Service", selection: $selectedService) {
-                    ForEach(services, id: \.self) { service in
-                        Text(service)
-                    }
-                }
-
-                Section(header: Text("Enter API Key")) {
-                    TextField("Paste API key here", text: $newKey)
-                        .textContentType(.password)
-//                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
-
-                    Button("Save API Key") {
-                        Task {
-                            await keyManager.saveKey(newKey, for: selectedService)
-                            newKey = ""
+            VStack {
+                if manager.storedServices.isEmpty {
+                    VStack(spacing: 16) {
+                        Text("Your API keys will be saved here.")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Button(action: { showEditor = true }) {
+                            Label("Add API Key", systemImage: "plus")
                         }
                     }
-                }
-
-                Section(header: Text("Saved Keys")) {
-                    ForEach(services, id: \.self) { service in
-                        if let key = keyManager.apiKeys[service] {
+                } else {
+                    List {
+                        ForEach(manager.storedServices, id: \..self) { service in
                             HStack {
-                                Text(service)
+                                Text(service.displayName)
                                 Spacer()
-                                Text("••••\(key.suffix(4))")
-                                    .foregroundColor(.gray)
-                                Button(role: .destructive) {
-                                    Task {
-                                        await keyManager.deleteKey(for: service)
+                                if manager.currentService == service {
+                                    Text("In Use").foregroundColor(.blue)
+                                } else {
+                                    Button("Use") {
+                                        manager.setCurrentService(service)
                                     }
+                                }
+                                Button("Edit") {
+                                    editingService = service
+                                    showEditor = true
+                                }
+                                Button(role: .destructive) {
+                                    manager.deleteKey(for: service)
                                 } label: {
                                     Image(systemName: "trash")
                                 }
-                                .buttonStyle(BorderlessButtonStyle())
                             }
-                        } else {
-                            Text("\(service): No key saved")
-                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .listStyle(InsetGroupedListStyle())
+                    .navigationTitle("API Key Manager")
+                    .toolbar {
+                        Button(action: { showEditor = true }) {
+                            Image(systemName: "plus")
                         }
                     }
                 }
             }
-            .navigationTitle("API Key Manager")
+            .sheet(isPresented: $showEditor) {
+                APIKeyEditorView(
+                    manager: manager,
+                    service: editingService,
+                    onDismiss: {
+                        showEditor = false
+                        editingService = nil
+                    }
+                )
+            }
+        }
+    }
+}
+
+// MARK: - APIKeyEditorView
+
+struct APIKeyEditorView: View {
+    @ObservedObject var manager: APIKeyManager
+    var service: Service?
+    var onDismiss: () -> Void
+
+    @State private var selectedService: Service? = nil
+    @State private var apiKey: String = ""
+    @State private var makeActive = false
+
+    var isEditing: Bool { service != nil }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                if !isEditing {
+                    Picker("Service", selection: $selectedService) {
+                        ForEach(Service.allCases.filter { manager.getKey(for: $0) == nil }) { svc in
+                            Text(svc.displayName).tag(Optional(svc))
+                        }
+                    }
+                }
+
+                SecureField("API Key", text: $apiKey)
+                Toggle("Make Active", isOn: $makeActive)
+            }
+            .navigationTitle(isEditing ? "Edit API Key" : "Add API Key")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onDismiss)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        let svc = service ?? selectedService
+                        if let svc {
+                            manager.saveKey(apiKey, for: svc)
+                            if makeActive {
+                                manager.setCurrentService(svc)
+                            }
+                        }
+                        onDismiss()
+                    }.disabled(apiKey.isEmpty || (!isEditing && selectedService == nil))
+                }
+            }
+        }
+        .onAppear {
+            selectedService = service
+            if let svc = service {
+                apiKey = manager.getKey(for: svc) ?? ""
+                makeActive = manager.currentService == svc
+            }
         }
     }
 }
