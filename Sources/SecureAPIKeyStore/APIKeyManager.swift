@@ -66,6 +66,7 @@ public class APIKeyManager: ObservableObject {
 public enum Service: String, CaseIterable, Identifiable, Codable, Hashable {
     case openAI = "OpenAI"
     case gemini = "Gemini"
+    case new    = "New"
 
     public var id: String { rawValue }
 
@@ -73,6 +74,7 @@ public enum Service: String, CaseIterable, Identifiable, Codable, Hashable {
         switch self {
         case .openAI: return "OpenAI"
         case .gemini: return "Gemini"
+        case .new:    return ""
         }
     }
 }

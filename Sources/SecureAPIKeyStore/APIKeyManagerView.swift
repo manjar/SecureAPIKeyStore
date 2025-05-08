@@ -9,7 +9,6 @@ import SwiftUI
 
 public struct APIKeyManagerView: View {
     @ObservedObject var manager: APIKeyManager
-    @State private var showEditor = false
     @State private var editingService: Service? = nil
 
     public init(manager: APIKeyManager) {
@@ -24,7 +23,9 @@ public struct APIKeyManagerView: View {
                         Text("Your API keys will be saved here.")
                             .font(.body)
                             .foregroundColor(.secondary)
-                        Button(action: { showEditor = true }) {
+                        Button(action: {
+                            editingService = .new
+                        }) {
                             Label("Add API Key", systemImage: "plus")
                         }
                     }
@@ -35,39 +36,47 @@ public struct APIKeyManagerView: View {
                                 Text(service.displayName)
                                 Spacer()
                                 if manager.currentService == service {
-                                    Text("In Use").foregroundColor(.blue)
+                                    Text("Active").foregroundColor(.red)
                                 } else {
-                                    Button("Use") {
-                                        manager.setCurrentService(service)
+                                    Button("Activate") {
+                                        withAnimation {
+                                            manager.setCurrentService(service)
+                                        }
                                     }
+                                    .buttonStyle(BorderlessButtonStyle())
+                                    .foregroundColor(.blue)
                                 }
-                                Button("Edit") {
+                                Button {
                                     editingService = service
-                                    showEditor = true
-                                }
-                                Button(role: .destructive) {
-                                    manager.deleteKey(for: service)
                                 } label: {
-                                    Image(systemName: "trash")
+                                    Image(systemName: "pencil")
                                 }
+                                .buttonStyle(BorderlessButtonStyle())
+                            }
+                        }
+                        .onDelete { indexSet in
+                            for index in indexSet {
+                                let service = manager.storedServices[index]
+                                manager.deleteKey(for: service)
                             }
                         }
                     }
                     .listStyle(InsetGroupedListStyle())
                     .navigationTitle("API Key Manager")
                     .toolbar {
-                        Button(action: { showEditor = true }) {
+                        Button(action: {
+                            editingService = .new
+                        }) {
                             Image(systemName: "plus")
                         }
                     }
                 }
             }
-            .sheet(isPresented: $showEditor) {
+            .sheet(item: $editingService) { service in
                 APIKeyEditorView(
                     manager: manager,
-                    service: editingService,
+                    service: service,
                     onDismiss: {
-                        showEditor = false
                         editingService = nil
                     }
                 )
@@ -87,14 +96,16 @@ struct APIKeyEditorView: View {
     @State private var apiKey: String = ""
     @State private var makeActive = false
 
-    var isEditing: Bool { service != nil }
+    var isEditing: Bool { service != .new }
 
     var body: some View {
         NavigationView {
             Form {
-                if !isEditing {
+                if isEditing {
+                    Text("\(service?.displayName ?? "Unknown Service")")
+                } else {
                     Picker("Service", selection: $selectedService) {
-                        ForEach(Service.allCases.filter { manager.getKey(for: $0) == nil }) { svc in
+                        ForEach(Service.allCases.filter { manager.getKey(for: $0) == nil && $0 != .new }) { svc in
                             Text(svc.displayName).tag(Optional(svc))
                         }
                     }
@@ -110,7 +121,7 @@ struct APIKeyEditorView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        let svc = service ?? selectedService
+                        let svc = selectedService ?? selectedService
                         if let svc {
                             manager.saveKey(apiKey, for: svc)
                             if makeActive {
@@ -118,12 +129,14 @@ struct APIKeyEditorView: View {
                             }
                         }
                         onDismiss()
-                    }.disabled(apiKey.isEmpty || (!isEditing && selectedService == nil))
+                    }
+                    .disabled(apiKey.isEmpty || (!isEditing && selectedService == nil))
                 }
             }
         }
         .onAppear {
-            selectedService = service
+            let unsavedServices: [Service] = Service.allCases.filter { manager.getKey(for: $0) == nil && $0 != .new }
+            self.selectedService = unsavedServices.first
             if let svc = service {
                 apiKey = manager.getKey(for: svc) ?? ""
                 makeActive = manager.currentService == svc
