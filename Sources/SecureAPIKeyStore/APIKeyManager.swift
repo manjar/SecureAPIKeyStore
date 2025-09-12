@@ -22,6 +22,12 @@ public class APIKeyManager: ObservableObject {
         if let rawValue = UserDefaults.standard.string(forKey: currentServiceKey) {
             currentService = Service(rawValue: rawValue)
         }
+        if currentService == nil {
+            setCurrentService(.local)
+        }
+        if getKey(for: .local) == nil {
+            saveKey("No key needed", for: .local)
+        }
     }
 
     public func getKey(for service: Service) -> String? {
@@ -35,10 +41,15 @@ public class APIKeyManager: ObservableObject {
     }
 
     public func deleteKey(for service: Service) {
+        let wasActive = service == currentService
         keys.removeValue(forKey: service)
         keychain.delete(forKey: service.rawValue)
         if currentService == service {
             currentService = nil
+        }
+        // fall back on local if the active API key was deleted
+        if wasActive {
+            setCurrentService(.local)
         }
         objectWillChange.send()
     }
@@ -49,7 +60,7 @@ public class APIKeyManager: ObservableObject {
             UserDefaults.standard.set(service.rawValue, forKey: currentServiceKey)
         }
     }
-
+    
     public var storedServices: [Service] {
         Service.allCases.filter { keys[$0] != nil }
     }
@@ -64,9 +75,10 @@ public class APIKeyManager: ObservableObject {
 }
 
 public enum Service: String, CaseIterable, Identifiable, Codable, Hashable {
+    case local  = "local"
     case openAI = "OpenAI"
     case gemini = "Gemini"
-    case new    = "New"
+    case new    = "new"
 
     public var id: String { rawValue }
 
@@ -74,7 +86,17 @@ public enum Service: String, CaseIterable, Identifiable, Codable, Hashable {
         switch self {
         case .openAI: return "OpenAI"
         case .gemini: return "Gemini"
+        case .local:  return "Apple Intelligence"
         case .new:    return ""
+        }
+    }
+    
+    public var apiURL: URL? {
+        switch self {
+        case .openAI: return URL(string: "https://platform.openai.com/")
+        case .gemini: return URL(string: "https://aistudio.google.com/")
+        default:
+            return nil
         }
     }
 }

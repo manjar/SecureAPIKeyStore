@@ -32,27 +32,47 @@ public struct APIKeyManagerView: View {
                 } else {
                     List {
                         ForEach(manager.storedServices, id: \..self) { service in
-                            HStack {
+                            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                // Column 1: Name expands
                                 Text(service.displayName)
-                                Spacer()
-                                if manager.currentService == service {
-                                    Text("Active").foregroundColor(.red)
-                                } else {
-                                    Button("Activate") {
-                                        withAnimation {
-                                            manager.setCurrentService(service)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+
+                                Spacer(minLength: 8)
+
+                                // Column 2: Status (fixed width, right aligned)
+                                Group {
+                                    if manager.currentService == service {
+                                        Text("Active")
+                                            .foregroundColor(.red)
+                                            .frame(width: 90, alignment: .trailing)
+                                    } else {
+                                        Button("Activate") {
+                                            withAnimation { manager.setCurrentService(service) }
                                         }
+                                        .buttonStyle(BorderlessButtonStyle())
+                                        .foregroundColor(.blue)
+                                        .frame(width: 90, alignment: .trailing)
                                     }
-                                    .buttonStyle(BorderlessButtonStyle())
-                                    .foregroundColor(.blue)
                                 }
-                                Button {
-                                    editingService = service
-                                } label: {
-                                    Image(systemName: "pencil")
+
+                                // Column 3: Edit (fixed width, right aligned)
+                                Group {
+                                    if service != .local {
+                                        Button {
+                                            editingService = service
+                                        } label: {
+                                            Image(systemName: "pencil")
+                                        }
+                                        .buttonStyle(BorderlessButtonStyle())
+                                        .frame(width: 28, alignment: .trailing)
+                                    } else {
+                                        // keep column width even when hidden
+                                        Color.clear.frame(width: 28, height: 1)
+                                    }
                                 }
-                                .buttonStyle(BorderlessButtonStyle())
                             }
+                            .deleteDisabled(service == .local)
                         }
                         .onDelete { indexSet in
                             for index in indexSet {
@@ -63,6 +83,23 @@ public struct APIKeyManagerView: View {
                     }
                     .listStyle(InsetGroupedListStyle())
                     .navigationTitle("API Key Manager")
+#if DEBUG
+                    .toolbar {
+                        Button(action: {
+                            for service in Service.allCases {
+                                switch service {
+                                case .local, .new:
+                                    break
+                                default:
+                                    _ = manager.deleteKey(for: service)
+                                }
+                            }
+                            APIKeyManager.shared.setCurrentService(.local)
+                        }) {
+                            Image(systemName: "x.circle")
+                        }
+                    }
+#endif
                     .toolbar {
                         Button(action: {
                             editingService = .new
@@ -92,9 +129,36 @@ struct APIKeyEditorView: View {
     var service: Service?
     var onDismiss: () -> Void
 
-    @State private var selectedService: Service? = nil
+    @State private var selectedService: Service = .local
     @State private var apiKey: String = ""
     @State private var makeActive = false
+    @State private var showDeletionConfirmation = false
+    @Environment(\.openURL) private var openURL
+
+    // A secure field with a built-in clear (x) button on the trailing edge
+    private struct ClearableSecureField: View {
+        @Binding var text: String
+        var title: String
+
+        var body: some View {
+            ZStack(alignment: .trailing) {
+                SecureField(title, text: $text)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                    .padding(.trailing, 30) // space for button
+                if !text.isEmpty {
+                    Button(action: { text.removeAll() }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                            .imageScale(.medium)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Clear text")
+                    .padding(.trailing, 4)
+                }
+            }
+        }
+    }
 
     var isEditing: Bool { service != .new }
 
@@ -106,41 +170,74 @@ struct APIKeyEditorView: View {
                 } else {
                     Picker("Service", selection: $selectedService) {
                         ForEach(Service.allCases.filter { manager.getKey(for: $0) == nil && $0 != .new }) { svc in
-                            Text(svc.displayName).tag(Optional(svc))
+                            Text(svc.displayName).tag(svc)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                ClearableSecureField(text: $apiKey, title: "API Key")
+                Toggle("Make Active", isOn: $makeActive)
+                Section {
+                    Button {
+                        if let url = isEditing ? service?.apiURL : selectedService.apiURL {
+                            openURL(url)
+                        }
+                    } label: {
+                        Label("Get a key", systemImage: "safari")
+                    }
+                } footer: {
+                    Text("Launches Safari to help you obtain an API key")
+                }
+                if isEditing, let service, service != .local {
+                    Section {
+                        Button("Delete", role: .destructive) {
+                            showDeletionConfirmation = true
+                        }
+                        .confirmationDialog(
+                            "Are you sure you want to delete this item?",
+                            isPresented: $showDeletionConfirmation,
+                            titleVisibility: .visible
+                        ) {
+                            Button("Delete", role: .destructive) {
+                                manager.deleteKey(for: service)
+                                onDismiss()
+                            }
+                            Button("Cancel", role: .cancel) {
+                                showDeletionConfirmation = false
+                            }
                         }
                     }
                 }
-
-                SecureField("API Key", text: $apiKey)
-                Toggle("Make Active", isOn: $makeActive)
             }
             .navigationTitle(isEditing ? "Edit API Key" : "Add API Key")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", action: onDismiss)
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        let svc = selectedService ?? selectedService
-                        if let svc {
-                            manager.saveKey(apiKey, for: svc)
+                if let service {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") {
+                            let targetService: Service = isEditing ? (service ?? selectedService) : selectedService
+                            manager.saveKey(apiKey, for: targetService)
                             if makeActive {
-                                manager.setCurrentService(svc)
+                                manager.setCurrentService(targetService)
                             }
+                            onDismiss()
                         }
-                        onDismiss()
+                        .disabled(apiKey.isEmpty)
                     }
-                    .disabled(apiKey.isEmpty || (!isEditing && selectedService == nil))
                 }
             }
         }
         .onAppear {
             let unsavedServices: [Service] = Service.allCases.filter { manager.getKey(for: $0) == nil && $0 != .new }
-            self.selectedService = unsavedServices.first
+            self.selectedService = unsavedServices.first ?? .local
             if let svc = service {
                 apiKey = manager.getKey(for: svc) ?? ""
-                makeActive = manager.currentService == svc
+                makeActive = manager.currentService == svc || !isEditing
             }
         }
     }
 }
+
