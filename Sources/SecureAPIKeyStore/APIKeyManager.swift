@@ -20,13 +20,19 @@ public class APIKeyManager: ObservableObject {
     public init() {
         loadKeysFromKeychain()
         if let rawValue = UserDefaults.standard.string(forKey: currentServiceKey) {
+            // load the last-activated service
             currentService = Service(rawValue: rawValue)
+        } else {
+            // no service has ever been activated. write .local as the current service
+            UserDefaults.standard.set(Service.local.rawValue, forKey: currentServiceKey)
         }
-        if currentService == nil {
-            setCurrentService(.local)
-        }
+        
         if getKey(for: .local) == nil {
             saveKey("No key needed", for: .local)
+        }
+
+        if currentService == nil {
+            setCurrentService(.local)
         }
     }
 
